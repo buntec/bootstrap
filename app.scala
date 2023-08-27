@@ -23,7 +23,7 @@ object Main extends IOApp.Simple {
 
     bs = bootstrap.Bootstrap[F]
 
-    workDir <- bs.pathFromString(s"./bootstrap-workspace-$uuid")
+    workDir <- bs.pathFromString(s"./workspace-$uuid")
 
     _ <- bs.downloadFile(
       s"https://github.com/neovim/neovim/releases/download/v${V.nvim}/nvim-macos.tar.gz",

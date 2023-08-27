@@ -3,6 +3,7 @@
 package bootstrap
 
 import cats.effect._
+import cats.effect.implicits._
 import cats._
 import cats.syntax.all._
 import fs2.Stream
@@ -43,6 +44,20 @@ case class NonZeroExitCodeException(code: Int, stderr: String)
 
 case class MissingCommandExecutable(override val getMessage: String)
     extends NoStackTrace
+
+extension [F[_]: Concurrent: Files: std.Console](process: Process[F]) {
+
+  def logErrors: F[Unit] = process.stderr
+    .through(fs2.text.utf8Decode)
+    .through(fs2.text.lines)
+    .evalMap(line => std.Console[F].errorln(line))
+    .compile
+    .drain
+
+  def writeStdoutToFile(path: Path): F[Unit] =
+    process.stdout.through(Files[F].writeAll(path)).compile.drain
+
+}
 
 object Bootstrap {
 
@@ -109,13 +124,26 @@ object Bootstrap {
                      ProcessBuilder("tar", "zx")
                        .withWorkingDirectory(outDir)
                        .spawn
-                       .use(tar => curl.stdout.through(tar.stdin).compile.drain)
+                       .use(tar =>
+                         (
+                           curl.logErrors,
+                           tar.logErrors,
+                           curl.stdout.through(tar.stdin).compile.drain
+                         ).parTupled.void
+                       )
                    } else if (url.endsWith(".gz")) {
-                     ProcessBuilder("gzip", "-d", outPath.toString)
+                     ProcessBuilder("gzip", "-d")
                        .withWorkingDirectory(outDir)
                        .spawn
                        .use(gzip =>
-                         curl.stdout.through(gzip.stdin).compile.drain
+                         (
+                           curl.logErrors,
+                           gzip.logErrors,
+                           curl.stdout.through(gzip.stdin).compile.drain,
+                           gzip.writeStdoutToFile(
+                             Path(outPath.toString.dropRight(3))
+                           )
+                         ).parTupled.void
                        )
                    } else if (url.endsWith(".zip")) {
                      ProcessBuilder("unzip", "-d", outPath.toString)
