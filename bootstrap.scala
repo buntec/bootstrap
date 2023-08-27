@@ -113,11 +113,10 @@ object Bootstrap {
                     s"the url $url doesn't point to a file"
                   )
                 )
-                .flatMap(pathFromString)
-                .flatMap { outPath =>
+                .flatMap { fileName =>
                   (if (!extract) {
                      curl.stdout
-                       .through(Files[F].writeAll(outPath))
+                       .through(Files[F].writeAll(outDir / fileName))
                        .compile
                        .drain
                    } else if (url.endsWith(".tar.gz") || url.endsWith(".tgz")) {
@@ -141,20 +140,29 @@ object Bootstrap {
                            gzip.logErrors,
                            curl.stdout.through(gzip.stdin).compile.drain,
                            gzip.writeStdoutToFile(
-                             Path(outPath.toString.dropRight(3))
+                             outDir / fileName.dropRight(3)
                            )
                          ).parTupled.void
                        )
                    } else if (url.endsWith(".zip")) {
-                     ProcessBuilder("unzip", "-d", outPath.toString)
+                     ProcessBuilder("unzip", "-d")
                        .withWorkingDirectory(outDir)
                        .spawn
-                       .use(gzip =>
-                         curl.stdout.through(gzip.stdin).compile.drain
+                       .use(unzip =>
+                         (
+                           curl.logErrors,
+                           unzip.logErrors,
+                           curl.stdout.through(unzip.stdin).compile.drain,
+                           unzip.writeStdoutToFile(
+                             outDir / fileName.dropRight(3)
+                           )
+                         ).parTupled.void
                        )
                    } else {
                      ApplicativeThrow[F].raiseError(
-                       new Exception("Failed to recognize compression format")
+                       new Exception(
+                         s"Failed to recognize compression format from url $url"
+                       )
                      )
                    })
                 }
