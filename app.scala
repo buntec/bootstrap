@@ -8,18 +8,42 @@ import scala.util.control.NoStackTrace
 import fs2.io.file.Files
 import fs2.io.file.Path
 
-import bootstrap as bs
+import cats.effect.std.UUIDGen
 
 object Main extends IOApp.Simple {
 
-  def runF[F[_]: Concurrent: Files: Processes] = for {
+  object V {
+    val nvim = "0.4.1"
+    val sbt = "1.9.4"
+  }
 
-    _ <- bs.pathFromString[F]("./tmp/neovim").flatMap { dest =>
-      bs.downloadFile[F](
-        "https://github.com/neovim/neovim/releases/download/v0.9.1/nvim-macos.tar.gz",
-        dest
-      )
-    }
+  def runF[F[_]: MonadThrow: bootstrap.Bootstrap: UUIDGen: std.Console] = for {
+
+    uuid <- UUIDGen[F].randomUUID
+
+    bs = bootstrap.Bootstrap[F]
+
+    workDir <- bs.pathFromString(s"./bootstrap-workspace-$uuid")
+
+    _ <- bs.downloadFile(
+      s"https://github.com/neovim/neovim/releases/download/v${V.nvim}/nvim-macos.tar.gz",
+      workDir / "neovim"
+    )
+
+    _ <- bs.downloadFile(
+      "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz",
+      workDir / "coursier"
+    )
+
+    _ <- bs.downloadFile(
+      "https://github.com/Virtuslab/scala-cli/releases/latest/download/scala-cli-x86_64-pc-linux.gz",
+      workDir / "scala-cli"
+    )
+
+    _ <- bs.downloadFile(
+      s"https://github.com/sbt/sbt/releases/download/v${V.sbt}/sbt-${V.sbt}.tgz",
+      workDir / "sbt"
+    )
 
   } yield ()
 
