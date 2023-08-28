@@ -33,8 +33,11 @@ trait Bootstrap[F[_]] {
   /** Tries to create a `fs2.io.file.Path` from a string. */
   def pathFromString(s: String): F[Path]
 
+  /** Returns true if the specified path exists. */
   def pathExists(path: Path): F[Boolean]
 
+  /** Creates the specified directory and any non-existant parent directories.
+    */
   def createDirs(path: Path): F[Unit]
 
   /** Equivalent to `chmod +x`. */
@@ -46,7 +49,8 @@ trait Bootstrap[F[_]] {
   /** Writes the given string to a file at the given path. */
   def writeConfigFile(dest: Path, content: String): F[Unit]
 
-  /** Executes a bash script (from `cwd` if provided) and returns the exit code.
+  /** Executes a bash script (from `workingDir` if provided) and returns the
+    * exit code.
     */
   def executeBashScript(script: String, workingDir: Option[Path]): F[Int]
 
@@ -235,6 +239,21 @@ object Bootstrap {
                                                 )
                                                   fileName.dropRight(7)
                                                 else fileName.dropRight(4))
+                                 (
+                                   curl.raiseOnNonZeroExitCode,
+                                   curl.logErrors,
+                                   tar.logErrors,
+                                   tar.raiseOnNonZeroExitCode,
+                                   curl.stdout.through(tar.stdin).compile.drain
+                                 ).parTupled.as(outPath)
+                               }
+                           } else if (fileName.endsWith(".tar.xz")) {
+                             ProcessBuilder("tar", "-xJ")
+                               .withWorkingDirectory(outDir)
+                               .spawn
+                               .use { tar =>
+                                 val outPath =
+                                   absOutDir / fileName.dropRight(7)
                                  (
                                    curl.raiseOnNonZeroExitCode,
                                    curl.logErrors,

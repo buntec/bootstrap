@@ -16,6 +16,7 @@ object Main extends IOApp.Simple {
   object V {
     val nvim = "0.9.1"
     val sbt = "1.9.4"
+    val nodejs = "18.17.1"
   }
 
   def runF[
@@ -56,6 +57,12 @@ object Main extends IOApp.Simple {
             workDir
           )
 
+          val installNodejs = bs.downloadFile(
+            s"https://nodejs.org/dist/v${V.nodejs}/node-v${V.nodejs}-linux-x64.tar.xz",
+            workDir,
+            renameTo = "nodejs".some
+          )
+
           val installPacker = bs.cloneRepo(
             "https://github.com/wbthomason/packer.nvim",
             (workDir / "packer" / "start" / "packer.nvim").some,
@@ -82,6 +89,7 @@ object Main extends IOApp.Simple {
             installCoursier,
             installSbt,
             installPacker,
+            installNodejs,
             writeFooConfig,
             writeBarConfig
           ).parTupled *> bs.logInfo(s"Finished writing to $workDir")
