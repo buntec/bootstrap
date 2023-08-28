@@ -30,16 +30,29 @@ trait Bootstrap[F[_]] {
 
   def logWarning(msg: String): F[Unit]
 
+  /** Tries to create a `fs2.io.file.Path` from a string. */
   def pathFromString(s: String): F[Path]
 
   def pathExists(path: Path): F[Boolean]
 
-  // equivalent to chmod +x
+  def createDirs(path: Path): F[Unit]
+
+  /** Equivalent to `chmod +x`. */
   def makeExecutable(path: Path): F[Unit]
 
+  /** Raises in `F` if `cmd` doesn't exist. */
   def ensureCommand(cmd: String): F[Unit]
 
-  // returns path to downloaded (possibly uncompressed) file or folder
+  /** Writes the given string to a file at the given path. */
+  def writeConfigFile(dest: Path, content: String): F[Unit]
+
+  /** Executes a bash script (from `cwd` if provided) and returns the exit code.
+    */
+  def executeBashScript(script: String, workingDir: Option[Path]): F[Int]
+
+  /** Attempts to download the file at the given URL, decompresses it if
+    * `extract` is `true` and returns the path to the result.
+    */
   def downloadFile(
       url: String,
       outDir: Path,
@@ -47,9 +60,11 @@ trait Bootstrap[F[_]] {
       renameTo: Option[String] = None
   ): F[Path]
 
+  /** Clones a git repo. */
   def cloneRepo(
       repository: String,
-      destination: Option[Path] = None
+      destination: Option[Path] = None,
+      extraArgs: List[String] = Nil
   ): F[Unit]
 
 }
@@ -128,6 +143,9 @@ object Bootstrap {
       def pathExists(path: Path): F[Boolean] =
         Files[F].exists(path)
 
+      override def createDirs(path: Path): F[Unit] =
+        Files[F].createDirectories(path)
+
       override def makeExecutable(path: Path): F[Unit] =
         Files[F].getPosixPermissions(path).flatMap { perm =>
           Files[F].setPosixPermissions(
@@ -151,6 +169,27 @@ object Bootstrap {
             )
           )
         )
+
+      override def writeConfigFile(dest: Path, content: String): F[Unit] =
+        Stream
+          .emit(content)
+          .covary[F]
+          .through(
+            Files[F].writeUtf8(dest)
+          )
+          .compile
+          .drain
+
+      override def executeBashScript(
+          script: String,
+          workingDir: Option[Path]
+      ): F[Int] = {
+        val pb = ProcessBuilder("bash", "-c", script)
+        workingDir
+          .fold(pb)(wd => pb.withWorkingDirectory(wd))
+          .spawn
+          .use(_.exitValue)
+      }
 
       def downloadFile(
           url: String,
@@ -260,13 +299,19 @@ object Bootstrap {
 
       def cloneRepo(
           repository: String,
-          destination: Option[Path] = None
+          destination: Option[Path] = None,
+          extraArgs: List[String] = Nil
       ): F[Unit] =
         withLogging(
           ensureCommand("git") *>
             destination
-              .fold(ProcessBuilder("git", "clone", repository))(out =>
-                ProcessBuilder("git", "clone", repository, out.toString)
+              .fold(
+                ProcessBuilder("git", "clone" :: extraArgs ::: List(repository))
+              )(out =>
+                ProcessBuilder(
+                  "git",
+                  "clone" :: extraArgs ::: List(repository, out.toString)
+                )
               )
               .spawn
               .use(proc =>
