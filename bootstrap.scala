@@ -52,7 +52,7 @@ trait Bootstrap[F[_]] {
   /** Executes a bash script (from `workingDir` if provided) and returns the
     * exit code.
     */
-  def executeBashScript(script: String, workingDir: Option[Path]): F[Int]
+  def executeBashScript(script: String, workingDir: Option[Path] = None): F[Int]
 
   /** Attempts to download the file at the given URL, decompresses it if
     * `extract` is `true` and returns the path to the result.
