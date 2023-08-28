@@ -19,6 +19,7 @@ import java.nio.file.InvalidPathException
 import cats.effect.kernel.Outcome.Succeeded
 import cats.effect.kernel.Outcome.Errored
 import cats.effect.kernel.Outcome.Canceled
+import concurrent.duration.*
 
 import scala.io.AnsiColor
 
@@ -82,11 +83,9 @@ object syntax {
 
   extension [F[_]: Concurrent: Files: std.Console](process: Process[F]) {
 
-    private def logInfo(msg: String) =
-      std.Console[F].println(s"${AnsiColor.GREEN}$msg${AnsiColor.RESET}")
+    private def logInfo(msg: String) = std.Console[F].println(msg)
 
-    private def logError(msg: String) =
-      std.Console[F].println(s"${AnsiColor.RED}$msg${AnsiColor.RESET}")
+    private def logError(msg: String) = std.Console[F].println(msg)
 
     def logStdout: F[Unit] = process.stdout
       .through(fs2.text.utf8Decode)
@@ -95,7 +94,7 @@ object syntax {
       .compile
       .drain
 
-    def logErrors: F[Unit] = process.stderr
+    def logStderr: F[Unit] = process.stderr
       .through(fs2.text.utf8Decode)
       .through(fs2.text.lines)
       .evalMap(logError)
@@ -122,6 +121,8 @@ object Bootstrap {
   def create[F[_]: Temporal: Files: Processes: std.Console]: Bootstrap[F] =
     new Bootstrap[F] {
 
+      private val F = Temporal[F]
+
       import syntax._
 
       def logInfo(msg: String) =
@@ -134,12 +135,24 @@ object Bootstrap {
         std.Console[F].println(s"${AnsiColor.RED}$msg${AnsiColor.RESET}")
 
       private def withLogging[A](fa: F[A])(label: String) =
-        Temporal[F].guaranteeCase(logInfo(s"$label...") *> fa) {
-          _ match
-            case Succeeded(_) => logInfo(s"$label completed successfully...")
-            case Errored(e)   => logError(s"$label failed with errors: $e")
-            case Canceled()   => logWarning(s"$label was cancelled")
-        }
+        Stream
+          .eval(F.guaranteeCase(logInfo(s"$label...") *> fa) {
+            _ match
+              case Succeeded(_) => logInfo(s"✅ - $label")
+              case Errored(e)   => logError(s"❗ - $label failed: $e")
+              case Canceled()   => logWarning(s"🛑 - $label was cancelled")
+          })
+          .concurrently {
+            Stream
+              .awakeDelay(3.seconds)
+              .evalMap(d =>
+                logInfo(
+                  s"⌚️ - $label has been running for ${d.toSeconds} seconds"
+                )
+              )
+          }
+          .compile
+          .lastOrError
 
       def pathFromString(s: String): F[Path] =
         ApplicativeThrow[F].catchOnly[InvalidPathException](Path(s))
@@ -175,24 +188,28 @@ object Bootstrap {
         )
 
       override def writeConfigFile(dest: Path, content: String): F[Unit] =
-        Stream
-          .emit(content)
-          .covary[F]
-          .through(
-            Files[F].writeUtf8(dest)
-          )
-          .compile
-          .drain
+        withLogging(
+          Stream
+            .emit(content)
+            .covary[F]
+            .through(Files[F].writeUtf8(dest))
+            .compile
+            .drain
+        )(s"writing $dest")
 
       override def executeBashScript(
           script: String,
           workingDir: Option[Path]
       ): F[Int] = {
         val pb = ProcessBuilder("bash", "-c", script)
-        workingDir
-          .fold(pb)(wd => pb.withWorkingDirectory(wd))
-          .spawn
-          .use(_.exitValue)
+        withLogging(
+          workingDir
+            .fold(pb)(wd => pb.withWorkingDirectory(wd))
+            .spawn
+            .use(_.exitValue)
+        )(
+          s"running bash script '${script}'"
+        )
       }
 
       def downloadFile(
@@ -241,8 +258,8 @@ object Bootstrap {
                                                 else fileName.dropRight(4))
                                  (
                                    curl.raiseOnNonZeroExitCode,
-                                   curl.logErrors,
-                                   tar.logErrors,
+                                   curl.logStderr,
+                                   tar.logStderr,
                                    tar.raiseOnNonZeroExitCode,
                                    curl.stdout.through(tar.stdin).compile.drain
                                  ).parTupled.as(outPath)
@@ -256,8 +273,8 @@ object Bootstrap {
                                    absOutDir / fileName.dropRight(7)
                                  (
                                    curl.raiseOnNonZeroExitCode,
-                                   curl.logErrors,
-                                   tar.logErrors,
+                                   curl.logStderr,
+                                   tar.logStderr,
                                    tar.raiseOnNonZeroExitCode,
                                    curl.stdout.through(tar.stdin).compile.drain
                                  ).parTupled.as(outPath)
@@ -269,9 +286,9 @@ object Bootstrap {
                                .use { gzip =>
                                  val outPath = absOutDir / fileName.dropRight(3)
                                  (
-                                   curl.logErrors,
+                                   curl.logStderr,
                                    curl.raiseOnNonZeroExitCode,
-                                   gzip.logErrors,
+                                   gzip.logStderr,
                                    gzip.raiseOnNonZeroExitCode,
                                    curl.stdout
                                      .through(gzip.stdin)
@@ -287,9 +304,9 @@ object Bootstrap {
                                .use { unzip =>
                                  val outPath = absOutDir / fileName.dropRight(4)
                                  (
-                                   curl.logErrors,
+                                   curl.logStderr,
                                    curl.raiseOnNonZeroExitCode,
-                                   unzip.logErrors,
+                                   unzip.logStderr,
                                    unzip.raiseOnNonZeroExitCode,
                                    curl.stdout
                                      .through(unzip.stdin)
@@ -334,11 +351,11 @@ object Bootstrap {
               )
               .spawn
               .use(proc =>
-                (proc.logErrors, proc.raiseOnNonZeroExitCode).parTupled.void
+                (proc.logStderr, proc.raiseOnNonZeroExitCode).parTupled.void
               )
         )(
-          destination.fold(s"Cloning git repo $repository")(dest =>
-            f"Cloning git repo $repository to $dest"
+          destination.fold(s"cloning git repo $repository")(dest =>
+            f"cloning git repo $repository to $dest"
           )
         )
 
