@@ -206,7 +206,10 @@ object Bootstrap {
           workingDir
             .fold(pb)(wd => pb.withWorkingDirectory(wd))
             .spawn
-            .use(_.exitValue)
+            .use(proc =>
+              (proc.logStderr, proc.logStdout, proc.exitValue).parTupled
+                .map((_._3))
+            )
         )(
           s"running bash script '${script}'"
         )
@@ -351,7 +354,11 @@ object Bootstrap {
               )
               .spawn
               .use(proc =>
-                (proc.logStderr, proc.raiseOnNonZeroExitCode).parTupled.void
+                (
+                  proc.logStdout,
+                  proc.logStderr,
+                  proc.raiseOnNonZeroExitCode
+                ).parTupled.void
               )
         )(
           destination.fold(s"cloning git repo $repository")(dest =>
