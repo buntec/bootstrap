@@ -63,6 +63,11 @@ object Main extends IOApp.Simple {
             renameTo = "nodejs".some
           )
 
+          val installNomad = bs.downloadFile(
+            "https://releases.hashicorp.com/nomad/1.6.1/nomad_1.6.1_linux_amd64.zip",
+            workDir / "nomad"
+          )
+
           val installPacker = bs.cloneRepo(
             "https://github.com/wbthomason/packer.nvim",
             (workDir / "packer" / "start" / "packer.nvim").some,
@@ -98,6 +103,7 @@ object Main extends IOApp.Simple {
             writeBarConfig,
             echoHelloWorld,
             testFishScript,
+            installNomad
           ).parTupled *> bs.logInfo(s"Finished writing to $workDir")
 
         }

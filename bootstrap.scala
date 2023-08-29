@@ -329,23 +329,32 @@ object Bootstrap {
                                  ).parTupled.as(outPath)
                                }
                            } else if (fileName.endsWith(".zip")) {
-                             ProcessBuilder("unzip", "-d")
-                               .withWorkingDirectory(outDir)
-                               .spawn
-                               .use { unzip =>
-                                 val outPath = absOutDir / fileName.dropRight(4)
-                                 (
-                                   curl.logStderr,
-                                   curl.raiseOnNonZeroExitCode,
-                                   unzip.logStderr,
-                                   unzip.raiseOnNonZeroExitCode,
-                                   curl.stdout
-                                     .through(unzip.stdin)
-                                     .compile
-                                     .drain,
-                                   unzip.writeStdoutToFile(outPath)
-                                 ).parTupled.as(outPath)
-                               }
+                             Files[F].tempDirectory.use { tmpDir =>
+                               val tmpFile = tmpDir / fileName
+                               curl.stdout
+                                 .through(Files[F].writeAll(tmpFile))
+                                 .compile
+                                 .drain
+                                 .flatMap { _ =>
+                                   ProcessBuilder(
+                                     "unzip",
+                                     s"$tmpFile"
+                                   ).withWorkingDirectory(outDir)
+                                     .spawn
+                                     .use { unzip =>
+                                       val outPath =
+                                         absOutDir / fileName.dropRight(4)
+                                       (
+                                         curl.logStderr,
+                                         curl.raiseOnNonZeroExitCode,
+                                         unzip.logStderr,
+                                         unzip.raiseOnNonZeroExitCode,
+                                         unzip.logStderr,
+                                         unzip.logStdout
+                                       ).parTupled.as(absOutDir)
+                                     }
+                                 }
+                             }
                            } else {
                              ApplicativeThrow[F].raiseError(
                                new Exception(
