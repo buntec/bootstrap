@@ -83,6 +83,10 @@ object Main extends IOApp.Simple {
              |baz=${V.nvim}""".stripMargin
           )
 
+          val echoHelloWorld = bs.executeBashScript("echo 'hello bash'")
+          val testFishScript =
+            bs.executeShellScript("echo 'hello fish'", "fish")
+
           (
             installNeovim,
             installScalaCli,
@@ -91,7 +95,9 @@ object Main extends IOApp.Simple {
             installPacker,
             installNodejs,
             writeFooConfig,
-            writeBarConfig
+            writeBarConfig,
+            echoHelloWorld,
+            testFishScript,
           ).parTupled *> bs.logInfo(s"Finished writing to $workDir")
 
         }

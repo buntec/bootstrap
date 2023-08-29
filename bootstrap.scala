@@ -50,6 +50,15 @@ trait Bootstrap[F[_]] {
   /** Writes the given string to a file at the given path. */
   def writeConfigFile(dest: Path, content: String): F[Unit]
 
+  /** Executes a shell script (from `workingDir` if provided) and returns the
+    * exit code.
+    */
+  def executeShellScript(
+      script: String,
+      executable: String,
+      workingDir: Option[Path] = None
+  ): F[Int]
+
   /** Executes a bash script (from `workingDir` if provided) and returns the
     * exit code.
     */
@@ -150,11 +159,7 @@ object Bootstrap {
           .concurrently {
             Stream
               .awakeDelay(3.seconds)
-              .evalMap(d =>
-                logInfo(
-                  s"⌚️ - $label has been running for ${d.toSeconds} seconds"
-                )
-              )
+              .evalMap(d => logInfo(s"⌚️ (${d.toSeconds} secs) - $label"))
           }
           .compile
           .lastOrError
@@ -202,41 +207,41 @@ object Bootstrap {
             .drain
         )(s"writing $dest")
 
+      override def executeShellScript(
+          script: String,
+          executable: String,
+          workingDir: Option[Path]
+      ): F[Int] =
+        withLogging(
+          Files[F].tempDirectory.use { tmpDir =>
+            val scriptPath = tmpDir / "script.sh"
+            Stream
+              .emit(script)
+              .covary[F]
+              .through(Files[F].writeUtf8(scriptPath))
+              .compile
+              .drain *> {
+              val pb = ProcessBuilder(executable, s"$scriptPath")
+              workingDir
+                .fold(pb)(wd => pb.withWorkingDirectory(wd))
+                .spawn
+                .use(proc =>
+                  (proc.logStderr, proc.logStdout, proc.exitValue).parTupled
+                    .map((_._3))
+                )
+            }
+          }
+        )(s"running shell ($executable) script '${script}'")
+
       override def executeBashScript(
           script: String,
           workingDir: Option[Path]
-      ): F[Int] = {
-        val pb = ProcessBuilder("bash", "-c", script)
-        withLogging(
-          workingDir
-            .fold(pb)(wd => pb.withWorkingDirectory(wd))
-            .spawn
-            .use(proc =>
-              (proc.logStderr, proc.logStdout, proc.exitValue).parTupled
-                .map((_._3))
-            )
-        )(
-          s"running bash script '${script}'"
-        )
-      }
+      ): F[Int] = executeShellScript(script, "/bin/bash", workingDir)
 
       override def executeFishScript(
           script: String,
           workingDir: Option[Path]
-      ): F[Int] = {
-        val pb = ProcessBuilder("fish", "-c", script)
-        withLogging(
-          workingDir
-            .fold(pb)(wd => pb.withWorkingDirectory(wd))
-            .spawn
-            .use(proc =>
-              (proc.logStderr, proc.logStdout, proc.exitValue).parTupled
-                .map((_._3))
-            )
-        )(
-          s"running fish script '${script}'"
-        )
-      }
+      ): F[Int] = executeShellScript(script, "/bin/fish", workingDir)
 
       override def downloadFile(
           url: String,
