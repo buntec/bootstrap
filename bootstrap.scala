@@ -55,6 +55,11 @@ trait Bootstrap[F[_]] {
     */
   def executeBashScript(script: String, workingDir: Option[Path] = None): F[Int]
 
+  /** Executes a fish script (from `workingDir` if provided) and returns the
+    * exit code.
+    */
+  def executeFishScript(script: String, workingDir: Option[Path] = None): F[Int]
+
   /** Attempts to download the file at the given URL, decompresses it if
     * `extract` is `true` and returns the path to the result.
     */
@@ -125,13 +130,13 @@ object Bootstrap {
 
       import syntax._
 
-      def logInfo(msg: String) =
+      override def logInfo(msg: String) =
         std.Console[F].println(s"${AnsiColor.GREEN}$msg${AnsiColor.RESET}")
 
-      def logWarning(msg: String): F[Unit] =
+      override def logWarning(msg: String): F[Unit] =
         std.Console[F].println(s"${AnsiColor.YELLOW}$msg${AnsiColor.RESET}")
 
-      def logError(msg: String) =
+      override def logError(msg: String) =
         std.Console[F].println(s"${AnsiColor.RED}$msg${AnsiColor.RESET}")
 
       private def withLogging[A](fa: F[A])(label: String) =
@@ -154,10 +159,10 @@ object Bootstrap {
           .compile
           .lastOrError
 
-      def pathFromString(s: String): F[Path] =
+      override def pathFromString(s: String): F[Path] =
         ApplicativeThrow[F].catchOnly[InvalidPathException](Path(s))
 
-      def pathExists(path: Path): F[Boolean] =
+      override def pathExists(path: Path): F[Boolean] =
         Files[F].exists(path)
 
       override def createDirs(path: Path): F[Unit] =
@@ -215,7 +220,25 @@ object Bootstrap {
         )
       }
 
-      def downloadFile(
+      override def executeFishScript(
+          script: String,
+          workingDir: Option[Path]
+      ): F[Int] = {
+        val pb = ProcessBuilder("fish", "-c", script)
+        withLogging(
+          workingDir
+            .fold(pb)(wd => pb.withWorkingDirectory(wd))
+            .spawn
+            .use(proc =>
+              (proc.logStderr, proc.logStdout, proc.exitValue).parTupled
+                .map((_._3))
+            )
+        )(
+          s"running fish script '${script}'"
+        )
+      }
+
+      override def downloadFile(
           url: String,
           outDir: Path,
           extract: Boolean = true,
@@ -336,7 +359,7 @@ object Bootstrap {
               }
         )(s"downloading $url, writing result to $outDir")
 
-      def cloneRepo(
+      override def cloneRepo(
           repository: String,
           destination: Option[Path] = None,
           extraArgs: List[String] = Nil
